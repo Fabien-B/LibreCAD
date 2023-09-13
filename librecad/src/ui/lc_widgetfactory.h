@@ -21,6 +21,7 @@ class QG_CommandWidget;
 class LC_CustomToolbar;
 class QC_ApplicationWindow;
 class LC_ActionGroupManager;
+class TC_TracerWidget;
 
 /**
  * creates the widgets and adds them to the main window;
@@ -53,6 +54,7 @@ public:
     QG_BlockWidget* block_widget;
     QG_LibraryWidget* library_widget;
     QG_CommandWidget* command_widget;
+    TC_TracerWidget* tracer_widget;
 
     QMenu* file_menu;
     QMenu* windows_menu;

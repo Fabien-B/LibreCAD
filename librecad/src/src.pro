@@ -26,7 +26,7 @@ CONFIG += qt \
     verbose \
     depend_includepath
 
-QT += widgets printsupport
+QT += widgets printsupport serialport
 CONFIG += c++14
 *-g++ {
     QMAKE_CXXFLAGS += -fext-numeric-literals
@@ -227,7 +227,8 @@ HEADERS += \
     lib/engine/lc_undosection.h \
     lib/printing/lc_printing.h \
     actions/lc_actiondrawlinepolygon3.h \
-    main/lc_application.h
+    main/lc_application.h \
+    ui/forms/tc_tracerwidget.h
 
 SOURCES += \
     lib/actions/rs_actioninterface.cpp \
@@ -321,7 +322,8 @@ SOURCES += \
     lib/engine/rs.cpp \
     lib/printing/lc_printing.cpp \
     actions/lc_actiondrawlinepolygon3.cpp \
-    main/lc_application.cpp
+    main/lc_application.cpp \
+    ui/forms/tc_tracerwidget.cpp
 
 # ################################################################################
 # Command
@@ -887,6 +889,7 @@ FORMS = ui/forms/qg_commandwidget.ui \
     ui/forms/qg_activelayername.ui \
     ui/forms/lc_dlgsplinepoints.ui \
     ui/forms/lc_widgetoptionsdialog.ui \
+    ui/forms/tc_tracerwidget.ui \
     ui/lc_deviceoptions.ui \
     ui/generic/comboboxoption.ui \
     ui/generic/widgetcreator.ui \

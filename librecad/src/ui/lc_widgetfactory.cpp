@@ -44,6 +44,7 @@
 #include "qg_activelayername.h"
 #include "qg_mousewidget.h"
 #include "qg_pentoolbar.h"
+#include "tc_tracerwidget.h"
 
 #include "rs_debug.h"
 
@@ -341,11 +342,19 @@ void LC_WidgetFactory::createRightSidebar(QG_ActionHandler* action_handler)
     main_window->setDockOptions(QMainWindow::AnimatedDocks
                                 | QMainWindow::AllowTabbedDocks );
 
+    QDockWidget* dock_tracer = new QDockWidget(QC_ApplicationWindow::tr("Tracer"), main_window);
+    dock_tracer->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    dock_tracer->setObjectName("tracer_dockwidget");
+    tracer_widget = new TC_TracerWidget(dock_tracer, "Command");
+    connect(main_window, SIGNAL(windowsChanged(bool)), command_widget, SLOT(setEnabled(bool)));
+    dock_tracer->setWidget(tracer_widget);
+
     main_window->addDockWidget(Qt::RightDockWidgetArea, dock_library);
     main_window->tabifyDockWidget(dock_library, dock_block);
     main_window->tabifyDockWidget(dock_block, dock_layer);
     main_window->addDockWidget(Qt::RightDockWidgetArea, dock_command);
     command_widget->getDockingAction()->setText(dock_command->isFloating() ? tr("Dock") : tr("Float"));
+    main_window->addDockWidget(Qt::RightDockWidgetArea, dock_tracer);
 }
 
 void LC_WidgetFactory::createStandardToolbars(QG_ActionHandler* action_handler)
