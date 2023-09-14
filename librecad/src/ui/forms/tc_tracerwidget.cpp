@@ -7,115 +7,236 @@
 #include "rs_vector.h"
 #include "rs_graphicview.h"
 #include <QRegularExpression>
-#include "rs_dialogfactory.h"
-#include "rs_dialogfactoryinterface.h"
-#include "rs_coordinateevent.h"
 #include <QMetaEnum>
 
 #include <QDebug>
 #include <QIODevice>
 
 
-// TODO: see lib/gui/rs_dialogfactoryinterface.h
-
-
 TC_TracerWidget::TC_TracerWidget(QWidget *parent, const char* name) :
     QWidget(parent),
-    ui(new Ui::TC_TracerWidget), ser(nullptr)
+    ui(new Ui::TC_TracerWidget), ser(nullptr), action(Action::Circle3P), stage(0), hasPreview(false), preview(nullptr)
 {
-    setObjectName(name);
+    QWidget::setObjectName(name);
     ui->setupUi(this);
 
     ser = new QSerialPort(this);
 
-    reg = QRegularExpression("l (\\d+),(\\d+) (\\d+),(\\d+)");
-    reg_zero = QRegularExpression("z (\\d+),(\\d+)");
-    reg_circle = QRegularExpression("c (\\d+),(\\d+) (\\d+)");
+    reg = QRegularExpression("(.) ([-+]?\\d*\\.?\\d+),([-+]?\\d*\\.?\\d+)");
 
     connect(ui->connect_button, &QPushButton::clicked, this, &TC_TracerWidget::openSerial);
     connect(ui->port_line_edit, &QLineEdit::returnPressed, this, &TC_TracerWidget::openSerial);
 
+    connect(ui->rectangleButton, &QPushButton::clicked, this, [=] {
+        action = Action::Rectangle;
+        anchors.clear();
+        stage = 0;
+    });
+
+    connect(ui->polygon_button, &QPushButton::clicked, this, [=] {
+        action = Action::Polygon;
+        anchors.clear();
+    });
+
+    connect(ui->circlep_button, &QPushButton::clicked, this, [=] {
+        action = Action::Circle3P;
+        anchors.clear();
+    });
+
+
+
 
     connect(ser, &QIODevice::readyRead, ser, [=]() {
-        QByteArray ba = ser->readAll() ;
-        qDebug() << ba;
-
-        auto &w = QC_ApplicationWindow::getAppWindow();
-        auto doc = w->getDocument();
-
+        doc = QC_ApplicationWindow::getAppWindow()->getDocument();
+        if(preview == nullptr) {
+            preview = new RS_Preview(doc);
+        }
+        QByteArray ba = ser->readAll();
         auto m = reg.match(ba);
-        auto m_zero = reg_zero.match(ba);
-        auto m_circle = reg_circle.match(ba);
+
+        //qDebug() << ba;
 
         if (m.hasMatch()) {
             auto cap = m.capturedTexts();
-            qDebug() << "match !" << m.capturedTexts();
+            QString cmd = cap[1];
+            double x = cap[2].toDouble();
+            double y = cap[3].toDouble();
+            auto pt = RS_Vector(x, y);
 
-            int x0 = cap[1].toInt();
-            int y0 = cap[2].toInt();
-            int x1 = cap[3].toInt();
-            int y1 = cap[4].toInt();
+            if(cmd == "p") {
+                onPressed(pt);
+            } else if(cmd == "m") {
+                onMoved(pt);
+            } else if(cmd == "e") {
+                onEnd(pt);
+            }
+            doc->getGraphicView()->redraw(RS2::RedrawDrawing);
 
-
-
-
-            auto start = RS_Vector(x0, y0);
-            auto end = RS_Vector(x1, y1);
-
-            auto line = new RS_Line(start, end);
-            doc->addEntity(line);
-            doc->getGraphicView()->redraw();
-
-        }
-        else if (m_zero.hasMatch()) {
-            auto cap = m_zero.capturedTexts();
-            qDebug() << "match !" << m_zero.capturedTexts();
-
-            int x0 = cap[1].toInt();
-            int y0 = cap[2].toInt();
-
-            auto start = RS_Vector(x0, y0);
-
-            doc->getGraphicView()->moveRelativeZero(start);
-            doc->getGraphicView()->redraw();
-        }
-        else if (m_circle.hasMatch()) {
-            auto cap = m_circle.capturedTexts();
-            qDebug() << "match circle !" << m_circle.capturedTexts();
-
-            int x0 = cap[1].toInt();
-            int y0 = cap[2].toInt();
-            int r =  cap[3].toInt();
-
-            auto center = RS_Vector(x0, y0);
-
-            doc->getGraphicView()->moveRelativeZero(center);
-
-            auto cd = RS_CircleData(center, r);
-            auto circle = new RS_Circle(doc, cd);
-
-            doc->addEntity(circle);
-            doc->getGraphicView()->redraw();
-        }
-        else {
+        } else {
             qDebug() << "no match";
         }
     });
 
-
-
-
-    connect(ui->rectangleButton, &QPushButton::clicked, this, [=] {
-        auto &w = QC_ApplicationWindow::getAppWindow();
-        auto doc = w->getDocument();
-
-        auto start = RS_Vector(10, 10);
-        auto end = RS_Vector(30, 30);
-        auto line = new RS_Line(start, end);
-        doc->addEntity(line);
-        doc->getGraphicView()->redraw();
-    });
 }
+
+
+
+void TC_TracerWidget::onPressed(RS_Vector pos) {
+    switch(action) {
+    case Action::Rectangle:
+    break;
+    case Action::CircleCenterRadius:
+    {
+        switch(stage) {
+        case 0:
+            doc->getGraphicView()->moveRelativeZero(pos);
+            stage = 1;
+            break;
+        case 1:
+        {
+            stage = 0;
+            auto center = doc->getGraphicView()->getRelativeZero();
+            double r = center.distanceTo(pos);
+            circle_data.radius = r;
+            RS_Circle* circle = new RS_Circle(doc, circle_data);
+            circle->setLayerToActive();
+            circle->setPenToActive();
+
+            doc->addEntity(circle);
+            deletePreview();
+
+            // upd. undo list:
+            doc->startUndoCycle();
+            doc->addUndoable(circle);
+            doc->endUndoCycle();
+            doc->getGraphicView()->redraw();
+        }
+        break;
+        default:
+            break;
+        }
+
+
+    }
+    break;
+    case Action::Circle3P:
+    {
+        switch(anchors.size()) {
+        case 0:
+        case 1:
+            doc->getGraphicView()->moveRelativeZero(pos);
+            anchors.append(pos);
+            doc->getGraphicView()->redraw();
+            break;
+        case 2:
+        {
+            anchors.append(pos);
+            auto circle = new RS_Circle(doc, RS_CircleData());
+            circle->createFrom3P(anchors[0], anchors[1], anchors[2]);
+            deletePreview();
+            doc->addEntity(circle);
+            doc->startUndoCycle();
+            doc->addUndoable(circle);
+            doc->endUndoCycle();
+            doc->getGraphicView()->redraw();
+            anchors.clear();
+        }
+            break;
+        default:
+            break;
+        }
+    }
+    break;
+    case Action::Polygon:
+    {
+        doc->getGraphicView()->moveRelativeZero(pos);
+        anchors.append(pos);
+    }
+    break;
+    }
+}
+
+void TC_TracerWidget::onMoved(RS_Vector pos) {
+    switch(action) {
+    case Action::Rectangle:
+        break;
+        case Action::CircleCenterRadius:
+        {
+            auto center = doc->getGraphicView()->getRelativeZero();
+            double r = center.distanceTo(pos);
+            circle_data.center = center;
+            circle_data.radius = r;
+            deletePreview();
+            preview->addEntity(new RS_Circle(preview, circle_data));
+            drawPreview();
+        }
+        break;
+        case Action::Circle3P:
+            doc->getGraphicView()->moveRelativeZero(pos);
+            if(anchors.size() == 2) {
+                auto circle = new RS_Circle(preview, RS_CircleData());
+                circle->createFrom3P(anchors[0], anchors[1], pos);
+                deletePreview();
+                preview->addEntity(circle);
+                drawPreview();
+            }
+            doc->getGraphicView()->redraw();
+            break;
+        case Action::Polygon:
+        {
+            deletePreview();
+            for(int i=1; i<anchors.size(); i++) {
+                preview->addEntity(new RS_Line(preview, anchors[i-1], anchors[i]));
+            }
+            // line to current pos
+            preview->addEntity(new RS_Line(preview, anchors.last(), pos));
+
+            if(anchors.size() >= 2) {
+                preview->addEntity(new RS_Line(preview, pos, anchors.first()));
+            }
+            drawPreview();
+        }
+        break;
+    }
+
+
+}
+
+void TC_TracerWidget::onEnd(RS_Vector pos) {
+    Q_UNUSED(pos)
+    switch(action) {
+    case Action::Rectangle:
+    case Action::CircleCenterRadius:
+    case Action::Circle3P:
+        anchors.clear();
+        deletePreview();
+        doc->getGraphicView()->redraw();
+    case Action::Polygon:
+    {
+        deletePreview();
+        doc->startUndoCycle();
+        for(int i=1; i<anchors.size(); i++) {
+            auto line = new RS_Line(doc, anchors[i-1], anchors[i]);
+            line->setLayerToActive();
+            line->setPenToActive();
+            doc->addEntity(line);
+            doc->addUndoable(line);
+        }
+        if(anchors.size() >= 2) {
+                    auto line = new RS_Line(doc, anchors.last(), anchors.first());
+                    line->setLayerToActive();
+                    line->setPenToActive();
+                    doc->addEntity(line);
+                    doc->addUndoable(line);
+        }
+        doc->endUndoCycle();
+        anchors.clear();
+        doc->getGraphicView()->redraw();
+    }
+    break;
+    }
+}
+
 
 void TC_TracerWidget::openSerial() {
 
@@ -143,6 +264,39 @@ void TC_TracerWidget::openSerial() {
 
 
 }
+
+/**
+ * Deletes the preview from the screen.
+ */
+void TC_TracerWidget::deletePreview() {
+    if (hasPreview){
+        //avoid deleting NULL or empty preview
+        preview->clear();
+        hasPreview=false;
+    }
+    auto graphicView = QC_ApplicationWindow::getAppWindow()->getGraphicView();
+    if(!graphicView->isCleanUp()){
+        graphicView->getOverlayContainer(RS2::ActionPreviewEntity)->clear();
+    }
+}
+
+
+
+/**
+ * Draws / deletes the current preview.
+ */
+void TC_TracerWidget::drawPreview() {
+    auto graphicView = QC_ApplicationWindow::getAppWindow()->getGraphicView();
+    // RVT_PORT How does offset work??        painter->setOffset(offset);
+    RS_EntityContainer *container=graphicView->getOverlayContainer(RS2::ActionPreviewEntity);
+    container->clear();
+    container->setOwner(false); // Little hack for now so we don't delete the preview twice
+    container->addEntity(preview);
+    graphicView->redraw(RS2::RedrawOverlay);
+    hasPreview=true;
+}
+
+
 
 TC_TracerWidget::~TC_TracerWidget()
 {
