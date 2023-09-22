@@ -5,17 +5,22 @@
 #include "rs_line.h"
 #include "rs_circle.h"
 #include "rs_vector.h"
+#include "rs_point.h"
 #include "rs_graphicview.h"
+#include "rs_graphic.h"
+#include "rs_layer.h"
+#include "rs_polyline.h"
 #include <QRegularExpression>
 #include <QMetaEnum>
 
 #include <QDebug>
 #include <QIODevice>
+#include <QTimer>
 
 
 TC_TracerWidget::TC_TracerWidget(QWidget *parent, const char* name) :
     QWidget(parent),
-    ui(new Ui::TC_TracerWidget), ser(nullptr), action(Action::Circle3P), stage(0), hasPreview(false), preview(nullptr)
+    ui(new Ui::TC_TracerWidget), ser(nullptr), action(Action::Circle3P), stage(0), hasPreview(false), preview(nullptr), polyline(nullptr)
 {
     QWidget::setObjectName(name);
     ui->setupUi(this);
@@ -30,7 +35,6 @@ TC_TracerWidget::TC_TracerWidget(QWidget *parent, const char* name) :
     connect(ui->rectangleButton, &QPushButton::clicked, this, [=] {
         action = Action::Rectangle;
         anchors.clear();
-        stage = 0;
     });
 
     connect(ui->polygon_button, &QPushButton::clicked, this, [=] {
@@ -43,13 +47,19 @@ TC_TracerWidget::TC_TracerWidget(QWidget *parent, const char* name) :
         anchors.clear();
     });
 
-
-
+    connect(ui->freehand_button, &QPushButton::clicked, this, [=] {
+        action = Action::FreeHand;
+        anchors.clear();
+    });
 
     connect(ser, &QIODevice::readyRead, ser, [=]() {
         doc = QC_ApplicationWindow::getAppWindow()->getDocument();
         if(preview == nullptr) {
             preview = new RS_Preview(doc);
+            drawing_layer = new RS_Layer("drawing");
+            draft_layer = new RS_Layer("draft");
+            doc->getGraphic()->addLayer(drawing_layer);
+            doc->getGraphic()->addLayer(draft_layer);
         }
         QByteArray ba = ser->readAll();
         auto m = reg.match(ba);
@@ -79,18 +89,15 @@ TC_TracerWidget::TC_TracerWidget(QWidget *parent, const char* name) :
 
 }
 
-
-
 void TC_TracerWidget::onPressed(RS_Vector pos) {
     switch(action) {
     case Action::Rectangle:
     break;
     case Action::CircleCenterRadius:
     {
-        switch(stage) {
+        switch(anchors.size()) {
         case 0:
-            doc->getGraphicView()->moveRelativeZero(pos);
-            stage = 1;
+            newPoint(pos);
             break;
         case 1:
         {
@@ -99,8 +106,8 @@ void TC_TracerWidget::onPressed(RS_Vector pos) {
             double r = center.distanceTo(pos);
             circle_data.radius = r;
             RS_Circle* circle = new RS_Circle(doc, circle_data);
-            circle->setLayerToActive();
-            circle->setPenToActive();
+            circle->setLayer(drawing_layer);
+            //circle->setPenToActive();
 
             doc->addEntity(circle);
             deletePreview();
@@ -109,7 +116,6 @@ void TC_TracerWidget::onPressed(RS_Vector pos) {
             doc->startUndoCycle();
             doc->addUndoable(circle);
             doc->endUndoCycle();
-            doc->getGraphicView()->redraw();
         }
         break;
         default:
@@ -124,21 +130,22 @@ void TC_TracerWidget::onPressed(RS_Vector pos) {
         switch(anchors.size()) {
         case 0:
         case 1:
-            doc->getGraphicView()->moveRelativeZero(pos);
-            anchors.append(pos);
-            doc->getGraphicView()->redraw();
+        {
+            newPoint(pos);
+        }
             break;
         case 2:
         {
-            anchors.append(pos);
+            //anchors.append(pos);
+            newPoint(pos);
             auto circle = new RS_Circle(doc, RS_CircleData());
             circle->createFrom3P(anchors[0], anchors[1], anchors[2]);
+            circle->setLayer(drawing_layer);
             deletePreview();
             doc->addEntity(circle);
             doc->startUndoCycle();
             doc->addUndoable(circle);
             doc->endUndoCycle();
-            doc->getGraphicView()->redraw();
             anchors.clear();
         }
             break;
@@ -149,11 +156,28 @@ void TC_TracerWidget::onPressed(RS_Vector pos) {
     break;
     case Action::Polygon:
     {
-        doc->getGraphicView()->moveRelativeZero(pos);
-        anchors.append(pos);
+        newPoint(pos);
     }
     break;
+    case Action::FreeHand:
+        if(polyline == nullptr) {
+            polyline = new RS_Polyline(preview);
+            preview->addEntity(polyline);
+        } else {
+            auto p = polyline->clone();
+            p->reparent(doc);
+            p->setLayer(drawing_layer);
+            doc->addEntity(p);
+            doc->startUndoCycle();
+            doc->addUndoable(p);
+            doc->endUndoCycle();
+            polyline = nullptr;
+            deletePreview();
+        }
+
+        break;
     }
+    doc->getGraphicView()->redraw();
 }
 
 void TC_TracerWidget::onMoved(RS_Vector pos) {
@@ -162,7 +186,7 @@ void TC_TracerWidget::onMoved(RS_Vector pos) {
         break;
         case Action::CircleCenterRadius:
         {
-            auto center = doc->getGraphicView()->getRelativeZero();
+            auto center = anchors[0];   //doc->getGraphicView()->getRelativeZero();
             double r = center.distanceTo(pos);
             circle_data.center = center;
             circle_data.radius = r;
@@ -172,10 +196,10 @@ void TC_TracerWidget::onMoved(RS_Vector pos) {
         }
         break;
         case Action::Circle3P:
-            doc->getGraphicView()->moveRelativeZero(pos);
             if(anchors.size() == 2) {
                 auto circle = new RS_Circle(preview, RS_CircleData());
                 circle->createFrom3P(anchors[0], anchors[1], pos);
+                circle->setLayer(drawing_layer);
                 deletePreview();
                 preview->addEntity(circle);
                 drawPreview();
@@ -197,6 +221,12 @@ void TC_TracerWidget::onMoved(RS_Vector pos) {
             drawPreview();
         }
         break;
+        case Action::FreeHand:
+            if(polyline != nullptr) {
+                polyline->addVertex(pos);
+                drawPreview();
+            }
+            break;
     }
 
 
@@ -217,14 +247,14 @@ void TC_TracerWidget::onEnd(RS_Vector pos) {
         doc->startUndoCycle();
         for(int i=1; i<anchors.size(); i++) {
             auto line = new RS_Line(doc, anchors[i-1], anchors[i]);
-            line->setLayerToActive();
+            line->setLayer(drawing_layer);
             line->setPenToActive();
             doc->addEntity(line);
             doc->addUndoable(line);
         }
         if(anchors.size() >= 2) {
                     auto line = new RS_Line(doc, anchors.last(), anchors.first());
-                    line->setLayerToActive();
+                    line->setLayer(drawing_layer);
                     line->setPenToActive();
                     doc->addEntity(line);
                     doc->addUndoable(line);
@@ -234,9 +264,18 @@ void TC_TracerWidget::onEnd(RS_Vector pos) {
         doc->getGraphicView()->redraw();
     }
     break;
+    case Action::FreeHand:
+        break;
     }
 }
 
+
+void TC_TracerWidget::newPoint(RS_Vector pos) {
+    anchors.append(pos);
+    auto pt = new RS_Point(doc, pos);
+    pt->setLayer(draft_layer);
+    doc->addEntity(pt);
+}
 
 void TC_TracerWidget::openSerial() {
 

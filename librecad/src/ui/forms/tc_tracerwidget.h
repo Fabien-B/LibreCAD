@@ -22,6 +22,7 @@ public:
         CircleCenterRadius,
         Circle3P,
         Polygon,
+        FreeHand,
     };
 
     explicit TC_TracerWidget(QWidget *parent = nullptr, const char* name = 0);
@@ -37,6 +38,8 @@ private:
     void onPressed(RS_Vector pos);
     void onMoved(RS_Vector pos);
     void onEnd(RS_Vector pos);
+
+    void newPoint(RS_Vector pos);
 
     Ui::TC_TracerWidget *ui;
 
@@ -54,6 +57,11 @@ private:
 
     RS_CircleData circle_data;
     QList<RS_Vector> anchors;
+    RS_Layer* drawing_layer;
+    RS_Layer* draft_layer;
+
+    RS_Polyline* polyline;
+
 };
 
 #endif // TC_TRACERWIDGET_H
